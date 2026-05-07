@@ -1,0 +1,8 @@
+"$schema" = "https://yazi-rs.github.io/schemas/keymap.json"
+
+[mgr]
+prepend_keymap = [
+  { on = [ "g", "." ], run = "hidden toggle", desc = "Toggle hidden files" },
+  { on = [ "g", "o" ], run = "open --interactive", desc = "Open with..." },
+  { on = [ "g", "r" ], run = 'shell --orphan -- open -R "%h"', desc = "Reveal hovered file in Finder" },
+]
