@@ -9,6 +9,7 @@ Personal dotfiles managed by [chezmoi](https://www.chezmoi.io/).
 - `cdxb` and sanitized `cld` helper scripts
 - Public zsh modules for aliases, Atuin, Zoxide, Yazi shell wrapper, and history suggestions
 - Atuin config
+- Alfred `Proxy Clipboard` workflow
 
 ## Bootstrap
 
