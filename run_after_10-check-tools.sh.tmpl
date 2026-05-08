@@ -1,0 +1,44 @@
+#!/bin/sh
+
+set -eu
+
+missing=""
+
+for cmd in atuin zoxide yazi fzf lsd starship codex claude; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    missing="$missing $cmd"
+  fi
+done
+
+if [ -z "$missing" ]; then
+  exit 0
+fi
+
+echo "chezmoi: missing tools:$missing"
+
+{{- if eq .chezmoi.os "darwin" }}
+brew_tools=""
+manual_tools=""
+
+for cmd in $missing; do
+  case "$cmd" in
+    atuin|zoxide|yazi|fzf|lsd|starship)
+      brew_tools="$brew_tools $cmd"
+      ;;
+    *)
+      manual_tools="$manual_tools $cmd"
+      ;;
+  esac
+done
+
+if [ -n "$brew_tools" ]; then
+  echo "Install Homebrew tools:"
+  echo "  HOMEBREW_NO_AUTO_UPDATE=1 brew install$brew_tools"
+fi
+
+if [ -n "$manual_tools" ]; then
+  echo "Install manually or with your preferred package manager:$manual_tools"
+fi
+{{- else }}
+echo "Install these tools with your system package manager:$missing"
+{{- end }}
