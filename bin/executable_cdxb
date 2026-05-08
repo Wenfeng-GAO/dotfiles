@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+CODEX_BIN="${CODEX_BIN:-}"
+
+if [[ -z "$CODEX_BIN" ]]; then
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    # Prefer the codex installed under the active nvm Node version.
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh"
+    nvm use --silent default >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${NVM_BIN:-}" && -x "${NVM_BIN}/codex" ]]; then
+    CODEX_BIN="${NVM_BIN}/codex"
+  else
+    CODEX_BIN="$(command -v codex || true)"
+  fi
+fi
+
+if [[ -z "$CODEX_BIN" ]]; then
+  echo "cdxb: codex not found in PATH" >&2
+  exit 127
+fi
+
+exec env \
+  https_proxy=http://127.0.0.1:7897 \
+  http_proxy=http://127.0.0.1:7897 \
+  all_proxy=socks5://127.0.0.1:7897 \
+  NO_PROXY=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  no_proxy=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  "$CODEX_BIN" --dangerously-bypass-approvals-and-sandbox "$@"

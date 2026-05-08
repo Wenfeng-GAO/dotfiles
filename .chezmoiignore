@@ -1,1 +1,4 @@
 README.md
+.config/cld/env
+.config/zsh/private.env
+bin/cld.bak-sensitive-*

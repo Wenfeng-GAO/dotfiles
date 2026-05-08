@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+USE_PROXY=true
+API_TIMEOUT_MS=""
+ANTHROPIC_BASE_URL=""
+ANTHROPIC_AUTH_TOKEN=""
+ANTHROPIC_API_KEY=""
+ANTHROPIC_DEFAULT_HAIKU_MODEL=""
+ANTHROPIC_DEFAULT_SONNET_MODEL=""
+ANTHROPIC_DEFAULT_OPUS_MODEL=""
+CLD_ENV_FILE="${CLD_ENV_FILE:-$HOME/.config/cld/env}"
+
+if [[ -r "$CLD_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CLD_ENV_FILE"
+fi
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  cld <provider> [model] [claude args...]
+
+  Provider and model:
+  anthropic (default model sonnet, optional: haiku/sonnet/opus)
+  ant      k2.5  -> Kimi-K2.5
+           glm5  -> GLM-5
+  moonshot (default model Kimi-K2.5)
+  zenmux   (default model anthropic/claude-sonnet-4.5, optional: haiku/sonnet/opus)
+
+Options:
+  --proxy   Kept for compatibility; proxy env vars are injected by default
+
+Examples:
+  cld anthropic
+  cld anthropic opus --print
+  cld ant k2.5
+  cld ant glm5 --print
+  cld moonshot --help
+  cld --proxy ant glm5
+  cld zenmux
+  cld zenmux haiku
+  cld zenmux opus --print
+USAGE
+}
+
+require_env() {
+  local name="$1"
+  local provider="$2"
+
+  if [[ -z "${!name:-}" ]]; then
+    echo "cld: missing $name for provider '$provider'" >&2
+    echo "cld: add it to $CLD_ENV_FILE" >&2
+    exit 1
+  fi
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    --proxy)
+      USE_PROXY=true
+      shift
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ "$#" -lt 1 ]]; then
+  usage
+  exit 1
+fi
+
+provider="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+shift
+
+case "$provider" in
+  anthropic)
+    ANTHROPIC_MODEL="sonnet"
+
+    if [[ "$#" -gt 0 ]]; then
+      case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        haiku)
+          ANTHROPIC_MODEL="haiku"
+          shift
+          ;;
+        sonnet)
+          ANTHROPIC_MODEL="sonnet"
+          shift
+          ;;
+        opus)
+          ANTHROPIC_MODEL="opus"
+          shift
+          ;;
+      esac
+    fi
+    ;;
+
+  ant)
+    if [[ "$#" -lt 1 ]]; then
+      echo "ant requires a second argument: k2.5 or glm5" >&2
+      usage
+      exit 1
+    fi
+
+    require_env CLD_ANT_ANTHROPIC_BASE_URL "$provider"
+    require_env CLD_ANT_ANTHROPIC_AUTH_TOKEN "$provider"
+
+    model_choice="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    shift
+
+    ANTHROPIC_BASE_URL="$CLD_ANT_ANTHROPIC_BASE_URL"
+    ANTHROPIC_AUTH_TOKEN="$CLD_ANT_ANTHROPIC_AUTH_TOKEN"
+
+    case "$model_choice" in
+      k2.5|k2|kimi-k2.5|kimi_k2.5)
+        ANTHROPIC_MODEL="Kimi-K2.5"
+        ;;
+      glm5|glm-5|glm)
+        ANTHROPIC_MODEL="GLM-5"
+        ;;
+      *)
+        echo "Unknown Ant model: $model_choice (supported: k2.5 / glm5)" >&2
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+
+  moonshot)
+    require_env CLD_MOONSHOT_ANTHROPIC_BASE_URL "$provider"
+    require_env CLD_MOONSHOT_ANTHROPIC_AUTH_TOKEN "$provider"
+
+    ANTHROPIC_BASE_URL="$CLD_MOONSHOT_ANTHROPIC_BASE_URL"
+    ANTHROPIC_AUTH_TOKEN="$CLD_MOONSHOT_ANTHROPIC_AUTH_TOKEN"
+    ANTHROPIC_MODEL="Kimi-K2.5"
+    ;;
+
+  zenmux)
+    require_env CLD_ZENMUX_ANTHROPIC_BASE_URL "$provider"
+    require_env CLD_ZENMUX_ANTHROPIC_AUTH_TOKEN "$provider"
+
+    ANTHROPIC_BASE_URL="$CLD_ZENMUX_ANTHROPIC_BASE_URL"
+    ANTHROPIC_AUTH_TOKEN="$CLD_ZENMUX_ANTHROPIC_AUTH_TOKEN"
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/claude-haiku-4.5"
+    ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/claude-sonnet-4.5"
+    ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/claude-opus-4.5"
+    ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
+    API_TIMEOUT_MS="30000000"
+
+    if [[ "$#" -gt 0 ]]; then
+      case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        haiku)
+          ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+          shift
+          ;;
+        sonnet)
+          ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
+          shift
+          ;;
+        opus)
+          ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_OPUS_MODEL"
+          shift
+          ;;
+      esac
+    fi
+    ;;
+
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+
+  *)
+    echo "Unsupported provider: $provider (supported: anthropic, ant, moonshot, zenmux)" >&2
+    usage
+    exit 1
+    ;;
+esac
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "Error: claude command not found in PATH" >&2
+  exit 127
+fi
+
+ENV_ARGS=()
+
+[[ -n "$ANTHROPIC_BASE_URL" ]] && ENV_ARGS+=(ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL")
+[[ -n "$ANTHROPIC_AUTH_TOKEN" ]] && ENV_ARGS+=(ANTHROPIC_AUTH_TOKEN="$ANTHROPIC_AUTH_TOKEN")
+[[ -n "$ANTHROPIC_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_MODEL="$ANTHROPIC_MODEL")
+[[ -n "$API_TIMEOUT_MS" ]] && ENV_ARGS+=(API_TIMEOUT_MS="$API_TIMEOUT_MS")
+[[ -n "$ANTHROPIC_API_KEY" ]] && ENV_ARGS+=(ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
+[[ -n "$ANTHROPIC_DEFAULT_HAIKU_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_DEFAULT_HAIKU_MODEL="$ANTHROPIC_DEFAULT_HAIKU_MODEL")
+[[ -n "$ANTHROPIC_DEFAULT_SONNET_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_DEFAULT_SONNET_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL")
+[[ -n "$ANTHROPIC_DEFAULT_OPUS_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_DEFAULT_OPUS_MODEL="$ANTHROPIC_DEFAULT_OPUS_MODEL")
+
+if [[ "$USE_PROXY" == "true" ]]; then
+  ENV_ARGS+=(https_proxy="http://127.0.0.1:7897")
+  ENV_ARGS+=(http_proxy="http://127.0.0.1:7897")
+  ENV_ARGS+=(all_proxy="socks5://127.0.0.1:7897")
+  ENV_ARGS+=(NO_PROXY=".alipay.com,alipay.com,localhost,127.0.0.1")
+  ENV_ARGS+=(no_proxy=".alipay.com,alipay.com,localhost,127.0.0.1")
+fi
+
+exec env "${ENV_ARGS[@]}" claude --dangerously-skip-permissions "$@"
