@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+CODEX_ACP_BIN="${CODEX_ACP_BIN:-}"
+
+if [[ -z "$CODEX_ACP_BIN" ]]; then
+  CODEX_ACP_BIN="$(command -v codex-acp || true)"
+fi
+
+if [[ -z "$CODEX_ACP_BIN" ]]; then
+  echo "codex-acp-proxy: codex-acp not found in PATH" >&2
+  exit 127
+fi
+
+exec env \
+  https_proxy=http://127.0.0.1:7897 \
+  http_proxy=http://127.0.0.1:7897 \
+  all_proxy=socks5://127.0.0.1:7897 \
+  NO_PROXY=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  no_proxy=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  "$CODEX_ACP_BIN" "$@"

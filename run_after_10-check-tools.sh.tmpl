@@ -4,7 +4,7 @@ set -eu
 
 missing=""
 
-for cmd in atuin zoxide yazi fzf lsd starship codex claude; do
+for cmd in atuin zoxide yazi fzf lsd starship codex codex-acp codex-acp-proxy claude; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     missing="$missing $cmd"
   fi
