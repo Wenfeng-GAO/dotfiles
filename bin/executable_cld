@@ -56,6 +56,58 @@ require_env() {
   fi
 }
 
+is_claude_passthrough_arg() {
+  case "${1:-}" in
+    -p|--print|--output-format|--input-format|--verbose|--strict-mcp-config|--permission-mode|--mcp-config|--resume|--continue|--append-system-prompt)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+exec_claude_passthrough() {
+  local provider="${CLD_ROUTE_PROVIDER:-anthropic}"
+  local model="${CLD_ROUTE_MODEL:-}"
+
+  provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
+  model="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+
+  case "$provider" in
+    anthropic)
+      if [[ -n "$model" ]]; then
+        exec "$0" anthropic "$model" "$@"
+      fi
+      exec "$0" anthropic "$@"
+      ;;
+    ant)
+      exec "$0" ant "${model:-k2.5}" "$@"
+      ;;
+    moonshot)
+      exec "$0" moonshot "$@"
+      ;;
+    zenmux)
+      if [[ -n "$model" ]]; then
+        exec "$0" zenmux "$model" "$@"
+      fi
+      exec "$0" zenmux "$@"
+      ;;
+    *)
+      echo "Unsupported CLD_ROUTE_PROVIDER: $provider (supported: anthropic, ant, moonshot, zenmux)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+case "${1:-}" in
+  --version|-v)
+    exec claude --version
+    ;;
+esac
+
+if is_claude_passthrough_arg "${1:-}"; then
+  exec_claude_passthrough "$@"
+fi
+
 while [[ "$#" -gt 0 ]]; do
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     --proxy)
@@ -76,6 +128,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
   esac
 done
+
+if is_claude_passthrough_arg "${1:-}"; then
+  exec_claude_passthrough "$@"
+fi
 
 if [[ "$#" -lt 1 ]]; then
   usage
