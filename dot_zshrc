@@ -48,7 +48,11 @@ fi
 
 [ -d "$HOME/.opencode/bin" ] && export PATH="$HOME/.opencode/bin:$PATH"
 [ -d "$HOME/.gstack/repos/gstack/bin" ] && export PATH="$HOME/.gstack/repos/gstack/bin:$PATH"
-[ -d "$HOME/.npm-global/bin" ] && export PATH="$HOME/.npm-global/bin:$PATH"
+if [ -d "$HOME/.npm-global/bin" ]; then
+  path=("${path[@]:#"$HOME/.npm-global/bin"}" "$HOME/.npm-global/bin")
+  export PATH
+fi
+[ -d "$HOME/.pulumi/bin" ] && export PATH="$HOME/.pulumi/bin:$PATH"
 [ -d "$HOME/Library/Python/3.14/bin" ] && export PATH="$HOME/Library/Python/3.14/bin:$PATH"
 [ -d "$HOME/Downloads/jdk-21.0.1.jdk/Contents/Home" ] && export JAVA_HOME="$HOME/Downloads/jdk-21.0.1.jdk/Contents/Home"
 [ -n "${JAVA_HOME:-}" ] && export PATH="$JAVA_HOME/bin:$PATH"
