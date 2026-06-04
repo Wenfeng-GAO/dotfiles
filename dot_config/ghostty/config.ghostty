@@ -6,8 +6,8 @@ font-size = 14
 window-colorspace = display-p3
 
 # Theme
-theme = light:Rose Pine Dawn,dark:TokyoNight Storm
-window-theme = auto
+theme = TokyoNight Storm
+window-theme = dark
 
 # Window appearance
 background-opacity = 0.94
