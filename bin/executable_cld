@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+CLD_BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 USE_PROXY=true
 API_TIMEOUT_MS=""
 ANTHROPIC_BASE_URL=""
@@ -10,6 +11,7 @@ ANTHROPIC_API_KEY=""
 ANTHROPIC_DEFAULT_HAIKU_MODEL=""
 ANTHROPIC_DEFAULT_SONNET_MODEL=""
 ANTHROPIC_DEFAULT_OPUS_MODEL=""
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=""
 CLD_ENV_FILE="${CLD_ENV_FILE:-$HOME/.config/cld/env}"
 
 if [[ -r "$CLD_ENV_FILE" ]]; then
@@ -26,6 +28,7 @@ Usage:
   anthropic (default model sonnet, optional: haiku/sonnet/opus)
   ant      k2.5  -> Kimi-K2.5
            glm5  -> GLM-5
+           glm5.2 -> GLM-5.2[1m]
   deepseek (default model deepseek-v4-pro[1m], optional: pro/flash)
   moonshot (default model Kimi-K2.5)
   zenmux   (default model anthropic/claude-sonnet-4.5, optional: haiku/sonnet/opus)
@@ -38,6 +41,7 @@ Examples:
   cld anthropic opus --print
   cld ant k2.5
   cld ant glm5 --print
+  cld ant glm5.2 --print
   cld deepseek
   cld deepseek flash --print
   cld moonshot --help
@@ -85,7 +89,9 @@ check_claude_update() {
 
     case "$reply" in
       y|Y|yes|YES)
-        if ! npm install -g @anthropic-ai/claude-code@latest; then
+        if ! NPM_SAFE_UPDATE_BIN_PATH="$(command -v claude)" \
+          NPM_SAFE_UPDATE_PREFIX="$(npm prefix -g)" \
+          "$CLD_BIN_DIR/npm-safe-self-update" @anthropic-ai/claude-code claude "$latest_version" cld; then
           echo "cld: claude-code update failed; continuing with $current_version" >&2
         fi
         ;;
@@ -213,7 +219,7 @@ case "$provider" in
 
   ant)
     if [[ "$#" -lt 1 ]]; then
-      echo "ant requires a second argument: k2.5 or glm5" >&2
+      echo "ant requires a second argument: k2.5, glm5, or glm5.2" >&2
       usage
       exit 1
     fi
@@ -234,8 +240,15 @@ case "$provider" in
       glm5|glm-5|glm)
         ANTHROPIC_MODEL="GLM-5"
         ;;
+      glm5.2|glm-5.2|glm52|glm_5.2)
+        ANTHROPIC_DEFAULT_HAIKU_MODEL="GLM-5.2[1m]"
+        ANTHROPIC_DEFAULT_SONNET_MODEL="$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+        ANTHROPIC_DEFAULT_OPUS_MODEL="$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+        ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+        ;;
       *)
-        echo "Unknown Ant model: $model_choice (supported: k2.5 / glm5)" >&2
+        echo "Unknown Ant model: $model_choice (supported: k2.5 / glm5 / glm5.2)" >&2
         usage
         exit 1
         ;;
@@ -335,6 +348,7 @@ ENV_ARGS=()
 [[ -n "$ANTHROPIC_DEFAULT_HAIKU_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_DEFAULT_HAIKU_MODEL="$ANTHROPIC_DEFAULT_HAIKU_MODEL")
 [[ -n "$ANTHROPIC_DEFAULT_SONNET_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_DEFAULT_SONNET_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL")
 [[ -n "$ANTHROPIC_DEFAULT_OPUS_MODEL" ]] && ENV_ARGS+=(ANTHROPIC_DEFAULT_OPUS_MODEL="$ANTHROPIC_DEFAULT_OPUS_MODEL")
+[[ -n "$CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" ]] && ENV_ARGS+=(CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="$CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
 
 if [[ "$USE_PROXY" == "true" ]]; then
   ENV_ARGS+=(https_proxy="http://127.0.0.1:7897")

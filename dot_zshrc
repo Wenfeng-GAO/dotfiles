@@ -81,3 +81,23 @@ ltree() {
 alias nosleep='caffeinate -dimsu'
 
 [ -f "$HOME/.config/zsh/tools.zsh" ] && source "$HOME/.config/zsh/tools.zsh"
+export PATH="$HOME/.utoo-proxy:$PATH"
+
+# 本机密钥(token 等)—— 隔离在 chezmoi 管理之外,不进 dotfiles/GitHub
+[ -f "$HOME/.config/zsh/secrets.zsh" ] && source "$HOME/.config/zsh/secrets.zsh"
+
+# gripmd — 用 grip 起本地 GitHub 风格 markdown 预览服务(配合 cmux 浏览器面板用)
+# 用法: gripmd [文件或目录] [端口]   默认 README.md / 6419
+# 例:   gripmd .planning/notes/mock-ui-design-spec.md
+#        gripmd docs 6420          # 目录模式,可点选多个文件
+gripmd() {
+  local target="${1:-README.md}"
+  local port="${2:-6419}"
+  if [ ! -e "$target" ]; then
+    print -P "%F{red}❌ 找不到: $target%f" >&2
+    return 1
+  fi
+  print -P "%F{green}📖 渲染:%f $target"
+  print -P "%F{blue}🔗 http://localhost:$port%f  (cmux 浏览器面板打开,Ctrl+C 退出)"
+  grip "$target" "$port"
+}
