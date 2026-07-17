@@ -5,6 +5,7 @@ set -euo pipefail
 CLD_BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 USE_PROXY=true
 API_TIMEOUT_MS=""
+CAST_RECORD="${CAST_RECORD:-0}"
 ANTHROPIC_BASE_URL=""
 ANTHROPIC_AUTH_TOKEN=""
 ANTHROPIC_API_KEY=""
@@ -14,9 +15,36 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=""
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=""
 CLD_ENV_FILE="${CLD_ENV_FILE:-$HOME/.config/cld/env}"
 
+# Agent/runtime callers may select a route explicitly. Treat the env file as
+# defaults and restore those per-process overrides after loading credentials.
+cld_route_provider_override_set="${CLD_ROUTE_PROVIDER+x}"
+cld_route_provider_override="${CLD_ROUTE_PROVIDER-}"
+cld_route_model_override_set="${CLD_ROUTE_MODEL+x}"
+cld_route_model_override="${CLD_ROUTE_MODEL-}"
+cld_claude_bin_override_set="${CLD_CLAUDE_BIN+x}"
+cld_claude_bin_override="${CLD_CLAUDE_BIN-}"
+
 if [[ -r "$CLD_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$CLD_ENV_FILE"
+fi
+
+if [[ "$cld_route_provider_override_set" == "x" ]]; then
+  CLD_ROUTE_PROVIDER="$cld_route_provider_override"
+fi
+if [[ "$cld_route_model_override_set" == "x" ]]; then
+  CLD_ROUTE_MODEL="$cld_route_model_override"
+fi
+if [[ "$cld_claude_bin_override_set" == "x" ]]; then
+  CLD_CLAUDE_BIN="$cld_claude_bin_override"
+fi
+unset cld_route_provider_override_set cld_route_provider_override
+unset cld_route_model_override_set cld_route_model_override
+unset cld_claude_bin_override_set cld_claude_bin_override
+
+CLAUDE_BIN="${CLD_CLAUDE_BIN:-}"
+if [[ -z "$CLAUDE_BIN" ]]; then
+  CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
 fi
 
 usage() {
@@ -30,12 +58,12 @@ Usage:
            glm5  -> GLM-5
            glm5.2 -> GLM-5.2[1m]
   deepseek (default model deepseek-v4-pro[1m], optional: pro/flash)
-  moonshot (default model Kimi-K2.5)
+  moonshot (default model Kimi-K3[1m], optional: k3/k2.5)
   zenmux   (default model anthropic/claude-sonnet-4.5, optional: haiku/sonnet/opus)
 
 Options:
   --proxy   Kept for compatibility; proxy env vars are injected by default
-
+  --cast    Record the session with asciinema to ~/code/ant/agent-casts/
 Examples:
   cld anthropic
   cld anthropic opus --print
@@ -45,6 +73,8 @@ Examples:
   cld deepseek
   cld deepseek flash --print
   cld moonshot --help
+  cld moonshot
+  cld moonshot k2.5
   cld --proxy ant glm5
   cld zenmux
   cld zenmux haiku
@@ -68,14 +98,24 @@ check_claude_update() {
     return
   fi
 
-  if ! command -v npm >/dev/null 2>&1 || ! command -v claude >/dev/null 2>&1; then
+  if ! command -v npm >/dev/null 2>&1 || [[ -z "$CLAUDE_BIN" || ! -x "$CLAUDE_BIN" ]]; then
     return
   fi
 
   local current_version latest_version reply
+  local npm_env=()
 
-  current_version="$(claude --version 2>/dev/null | awk '{print $1}' || true)"
-  latest_version="$(npm view @anthropic-ai/claude-code version 2>/dev/null || true)"
+  current_version="$("$CLAUDE_BIN" --version 2>/dev/null | awk '{print $1}' || true)"
+
+  if [[ "$USE_PROXY" == "true" ]]; then
+    npm_env+=(https_proxy="http://127.0.0.1:7897")
+    npm_env+=(http_proxy="http://127.0.0.1:7897")
+    npm_env+=(all_proxy="socks5://127.0.0.1:7897")
+    npm_env+=(NO_PROXY=".alipay.com,alipay.com,localhost,127.0.0.1")
+    npm_env+=(no_proxy=".alipay.com,alipay.com,localhost,127.0.0.1")
+  fi
+
+  latest_version="$(env "${npm_env[@]}" npm view @anthropic-ai/claude-code version --fetch-timeout=8000 --fetch-retries=0 2>/dev/null || true)"
 
   if [[ -z "$current_version" || -z "$latest_version" || "$current_version" == "$latest_version" ]]; then
     return
@@ -89,7 +129,7 @@ check_claude_update() {
 
     case "$reply" in
       y|Y|yes|YES)
-        if ! NPM_SAFE_UPDATE_BIN_PATH="$(command -v claude)" \
+        if ! NPM_SAFE_UPDATE_BIN_PATH="$CLAUDE_BIN" \
           NPM_SAFE_UPDATE_PREFIX="$(npm prefix -g)" \
           "$CLD_BIN_DIR/npm-safe-self-update" @anthropic-ai/claude-code claude "$latest_version" cld; then
           echo "cld: claude-code update failed; continuing with $current_version" >&2
@@ -136,7 +176,7 @@ exec_claude_passthrough() {
       exec "$0" deepseek "$@"
       ;;
     moonshot)
-      exec "$0" moonshot "$@"
+      exec "$0" moonshot "${model:-k3}" "$@"
       ;;
     zenmux)
       if [[ -n "$model" ]]; then
@@ -154,7 +194,7 @@ exec_claude_passthrough() {
 case "${1:-}" in
   --version|-v)
     check_claude_update
-    exec claude --version
+    exec "$CLAUDE_BIN" --version
     ;;
 esac
 
@@ -166,6 +206,10 @@ while [[ "$#" -gt 0 ]]; do
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     --proxy)
       USE_PROXY=true
+      shift
+      ;;
+    --cast)
+      export CAST_RECORD=1
       shift
       ;;
     -h|--help|help)
@@ -261,7 +305,32 @@ case "$provider" in
 
     ANTHROPIC_BASE_URL="$CLD_MOONSHOT_ANTHROPIC_BASE_URL"
     ANTHROPIC_AUTH_TOKEN="$CLD_MOONSHOT_ANTHROPIC_AUTH_TOKEN"
-    ANTHROPIC_MODEL="Kimi-K2.5"
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+
+    # default to Kimi-K3[1m]; wire all three Claude slots to it
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="Kimi-K3[1m]"
+    ANTHROPIC_DEFAULT_SONNET_MODEL="Kimi-K3[1m]"
+    ANTHROPIC_DEFAULT_OPUS_MODEL="Kimi-K3[1m]"
+    ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
+
+    if [[ "$#" -gt 0 ]]; then
+      case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        k3|kimi-k3|kimi_k3)
+          ANTHROPIC_DEFAULT_HAIKU_MODEL="Kimi-K3[1m]"
+          ANTHROPIC_DEFAULT_SONNET_MODEL="Kimi-K3[1m]"
+          ANTHROPIC_DEFAULT_OPUS_MODEL="Kimi-K3[1m]"
+          ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
+          shift
+          ;;
+        k2.5|k2|kimi-k2.5|kimi_k2.5)
+          ANTHROPIC_DEFAULT_HAIKU_MODEL="Kimi-K2.5"
+          ANTHROPIC_DEFAULT_SONNET_MODEL="Kimi-K2.5"
+          ANTHROPIC_DEFAULT_OPUS_MODEL="Kimi-K2.5"
+          ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
+          shift
+          ;;
+      esac
+    fi
     ;;
 
   deepseek)
@@ -331,8 +400,8 @@ case "$provider" in
     ;;
 esac
 
-if ! command -v claude >/dev/null 2>&1; then
-  echo "Error: claude command not found in PATH" >&2
+if [[ -z "$CLAUDE_BIN" || ! -x "$CLAUDE_BIN" ]]; then
+  echo "Error: claude command not found or not executable: ${CLAUDE_BIN:-<unset>}" >&2
   exit 127
 fi
 
@@ -358,4 +427,20 @@ if [[ "$USE_PROXY" == "true" ]]; then
   ENV_ARGS+=(no_proxy=".alipay.com,alipay.com,localhost,127.0.0.1")
 fi
 
-exec env "${ENV_ARGS[@]}" claude --dangerously-skip-permissions "$@"
+if [[ "$CAST_RECORD" == "1" && "${AGENT_CAST_ACTIVE:-0}" != "1" ]]; then
+  CAST_DIR="${AGENT_CAST_DIR:-$HOME/code/ant/agent-casts}"
+  mkdir -p "$CAST_DIR"
+  CAST_TS="$(date +%Y%m%d-%H%M%S)"
+  CAST_FILE="$CAST_DIR/cld-$CAST_TS.cast"
+  # Export env vars into THIS process so asciinema's child inherits them.
+  # Never put them in --command: that string lands in the cast header and ps output.
+  for ea in "${ENV_ARGS[@]}"; do
+    export "${ea?}"
+  done
+  export AGENT_CAST_ACTIVE=1 USE_PROXY="$USE_PROXY"
+  CMD_STR="$(printf '%q ' "$CLAUDE_BIN" --dangerously-skip-permissions "$@")"
+  echo "cld: recording to $CAST_FILE" >&2
+  exec asciinema rec "$CAST_FILE" --command "$CMD_STR" --return
+fi
+
+exec env "${ENV_ARGS[@]}" "$CLAUDE_BIN" --dangerously-skip-permissions "$@"
