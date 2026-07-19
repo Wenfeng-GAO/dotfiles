@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# cfuse writes terminal control sequences to stdout even in stream-json mode.
+# Claude Agent SDK expects stdout to be newline-delimited JSON only.
+CFUSE_BIN="${CFUSE_BIN:-$HOME/.local/bin/cfuse}"
+
+if [[ ! -x "$CFUSE_BIN" ]]; then
+  echo "cfuse-claude-code: cfuse not found or not executable: $CFUSE_BIN" >&2
+  exit 127
+fi
+
+"$CFUSE_BIN" --cc --dangerously-skip-permissions "$@" \
+  | /usr/bin/perl -MIO::Handle -pe 'BEGIN { STDOUT->autoflush(1) } s/\e\[[0-?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g'
+
+exit "${PIPESTATUS[0]}"
