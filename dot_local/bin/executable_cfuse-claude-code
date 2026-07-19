@@ -10,6 +10,12 @@ if [[ ! -x "$CFUSE_BIN" ]]; then
   exit 127
 fi
 
+# Preserve the real terminal for interactive `cld cfuse` sessions. Piping
+# stdout makes Claude Code infer print mode and reject an empty prompt.
+if [[ -t 0 && -t 1 ]]; then
+  exec "$CFUSE_BIN" --cc --dangerously-skip-permissions "$@"
+fi
+
 "$CFUSE_BIN" --cc --dangerously-skip-permissions "$@" \
   | /usr/bin/perl -MIO::Handle -pe 'BEGIN { STDOUT->autoflush(1) } s/\e\[[0-?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g'
 
