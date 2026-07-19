@@ -307,18 +307,19 @@ case "$provider" in
     ANTHROPIC_AUTH_TOKEN="$CLD_MOONSHOT_ANTHROPIC_AUTH_TOKEN"
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
 
-    # default to Kimi-K3[1m]; wire all three Claude slots to it
-    ANTHROPIC_DEFAULT_HAIKU_MODEL="Kimi-K3[1m]"
-    ANTHROPIC_DEFAULT_SONNET_MODEL="Kimi-K3[1m]"
-    ANTHROPIC_DEFAULT_OPUS_MODEL="Kimi-K3[1m]"
+    # default to k3 (provider-side id drift 2026-07-19: Kimi-K3[1m] dropped,
+    # api.kimi.com now accepts `k3`/`kimi-k3`; wire all three Claude slots to it
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="k3"
+    ANTHROPIC_DEFAULT_SONNET_MODEL="k3"
+    ANTHROPIC_DEFAULT_OPUS_MODEL="k3"
     ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
 
     if [[ "$#" -gt 0 ]]; then
       case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
         k3|kimi-k3|kimi_k3)
-          ANTHROPIC_DEFAULT_HAIKU_MODEL="Kimi-K3[1m]"
-          ANTHROPIC_DEFAULT_SONNET_MODEL="Kimi-K3[1m]"
-          ANTHROPIC_DEFAULT_OPUS_MODEL="Kimi-K3[1m]"
+          ANTHROPIC_DEFAULT_HAIKU_MODEL="k3"
+          ANTHROPIC_DEFAULT_SONNET_MODEL="k3"
+          ANTHROPIC_DEFAULT_OPUS_MODEL="k3"
           ANTHROPIC_MODEL="$ANTHROPIC_DEFAULT_SONNET_MODEL"
           shift
           ;;
