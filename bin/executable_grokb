@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+GROK_BIN="${GROK_BIN:-}"
+
+if [[ -z "$GROK_BIN" ]]; then
+  if [[ -x "$HOME/.grok/bin/grok" ]]; then
+    GROK_BIN="$HOME/.grok/bin/grok"
+  else
+    GROK_BIN="$(command -v grok 2>/dev/null || true)"
+  fi
+fi
+
+if [[ -z "$GROK_BIN" || ! -x "$GROK_BIN" ]]; then
+  echo "grokb: grok not found or not executable: ${GROK_BIN:-<unset>}" >&2
+  exit 127
+fi
+
+exec env \
+  https_proxy=http://127.0.0.1:7897 \
+  http_proxy=http://127.0.0.1:7897 \
+  HTTPS_PROXY=http://127.0.0.1:7897 \
+  HTTP_PROXY=http://127.0.0.1:7897 \
+  all_proxy=socks5://127.0.0.1:7897 \
+  ALL_PROXY=socks5://127.0.0.1:7897 \
+  NO_PROXY=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  no_proxy=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  "$GROK_BIN" --always-approve "$@"
