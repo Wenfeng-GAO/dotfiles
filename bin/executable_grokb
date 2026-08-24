@@ -17,6 +17,32 @@ if [[ -z "$GROK_BIN" || ! -x "$GROK_BIN" ]]; then
   exit 127
 fi
 
+# Paperclip injects http://macbook-pro-3:3100. That short hostname does not
+# resolve, and HTTP_PROXY intercepts it with 502. The server listens on
+# 127.0.0.1:3100, which is already in NO_PROXY.
+rewrite_paperclip_loopback() {
+  local url="${1:-}"
+  case "$url" in
+    http://macbook-pro-3:*|http://macbook-pro-3.local:*|http://MacBook-Pro-3:*|http://MacBook-Pro-3.local:*)
+      printf 'http://127.0.0.1:%s' "${url##*:}"
+      ;;
+    *)
+      printf '%s' "$url"
+      ;;
+  esac
+}
+
+if [[ -n "${PAPERCLIP_API_URL:-}" ]]; then
+  PAPERCLIP_API_URL="$(rewrite_paperclip_loopback "$PAPERCLIP_API_URL")"
+  export PAPERCLIP_API_URL
+fi
+if [[ -n "${PAPERCLIP_RUNTIME_API_URL:-}" ]]; then
+  PAPERCLIP_RUNTIME_API_URL="$(rewrite_paperclip_loopback "$PAPERCLIP_RUNTIME_API_URL")"
+  export PAPERCLIP_RUNTIME_API_URL
+fi
+
+NO_PROXY_VALUE=".alipay.com,alipay.com,localhost,127.0.0.1,macbook-pro-3,macbook-pro-3.local,MacBook-Pro-3,MacBook-Pro-3.local,.local"
+
 exec env \
   https_proxy=http://127.0.0.1:7897 \
   http_proxy=http://127.0.0.1:7897 \
@@ -24,6 +50,6 @@ exec env \
   HTTP_PROXY=http://127.0.0.1:7897 \
   all_proxy=socks5://127.0.0.1:7897 \
   ALL_PROXY=socks5://127.0.0.1:7897 \
-  NO_PROXY=.alipay.com,alipay.com,localhost,127.0.0.1 \
-  no_proxy=.alipay.com,alipay.com,localhost,127.0.0.1 \
+  NO_PROXY="$NO_PROXY_VALUE" \
+  no_proxy="$NO_PROXY_VALUE" \
   "$GROK_BIN" --always-approve "$@"
