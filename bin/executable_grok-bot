@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Restart Grok Bot.app so it uses local Clash mixed-port (127.0.0.1:7897).
+# Grok Bot's Node/undici ignores macOS system proxy; it needs HTTP_PROXY plus
+# NODE_USE_ENV_PROXY=1. Chromium is forced via --proxy-server. TUN is not used.
+# Dock launches later in this login session inherit the launchctl env, but still
+# need --proxy-server, so prefer this script (or a wrapper) to start the app.
+
+set -euo pipefail
+
+PROXY_HTTP="${GROK_BOT_HTTP_PROXY:-http://127.0.0.1:7897}"
+PROXY_SOCKS="${GROK_BOT_ALL_PROXY:-socks5://127.0.0.1:7897}"
+PROXY_HOST="${PROXY_HTTP#http://}"
+PROXY_HOST="${PROXY_HOST#https://}"
+PROXY_PORT="${PROXY_HOST##*:}"
+PROXY_HOST="${PROXY_HOST%%:*}"
+NO_PROXY_VALUE="${GROK_BOT_NO_PROXY:-.alipay.com,alipay.com,localhost,127.0.0.1,macbook-pro-3,macbook-pro-3.local,MacBook-Pro-3,MacBook-Pro-3.local,.local}"
+PROXY_BYPASS="${GROK_BOT_PROXY_BYPASS:-*.alipay.com;*.alipay.net;*.antfin.com;*.antgroup-inc.cn;*.alibaba-inc.com;*.alipayobjects.com;*.alicdn.com;*.aliyun.com;*.alipay-inc.com;*.antfin-inc.com;*.antfin-inc.net;*.mybank.cn;*.mybank.com;localhost;127.0.0.1}"
+APP_NAME="Grok Bot"
+APP_PATH="/Applications/${APP_NAME}.app"
+RESTART=1
+
+usage() {
+  cat <<'EOF'
+Usage: grok-bot [--no-restart] [--help]
+
+Inject proxy env into the current GUI session and restart Grok Bot.app
+so traffic goes through 127.0.0.1:7897.
+
+  --no-restart   only launchctl setenv; do not quit/reopen Grok Bot
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-restart) RESTART=0 ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      echo "grok-bot: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ ! -d "$APP_PATH" ]]; then
+  echo "grok-bot: app not found: $APP_PATH" >&2
+  exit 127
+fi
+
+if ! nc -z -G 2 "$PROXY_HOST" "$PROXY_PORT" >/dev/null 2>&1; then
+  echo "grok-bot: local proxy ${PROXY_HOST}:${PROXY_PORT} is not listening" >&2
+  exit 1
+fi
+
+inject_session_env() {
+  launchctl setenv HTTP_PROXY "$PROXY_HTTP"
+  launchctl setenv HTTPS_PROXY "$PROXY_HTTP"
+  launchctl setenv http_proxy "$PROXY_HTTP"
+  launchctl setenv https_proxy "$PROXY_HTTP"
+  launchctl setenv ALL_PROXY "$PROXY_SOCKS"
+  launchctl setenv all_proxy "$PROXY_SOCKS"
+  launchctl setenv NO_PROXY "$NO_PROXY_VALUE"
+  launchctl setenv no_proxy "$NO_PROXY_VALUE"
+  launchctl setenv NODE_USE_ENV_PROXY 1
+}
+
+quit_grok_bot() {
+  killall -TERM "$APP_NAME" >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 25); do
+    if ! pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  killall -KILL "$APP_NAME" >/dev/null 2>&1 || true
+}
+
+pid_of_main() {
+  ps -axo pid=,command= | awk '
+    index($0, "/Applications/Grok Bot.app/Contents/MacOS/Grok Bot") && $0 !~ /local-exec-daemon/ { print $1; exit }
+  '
+}
+
+verify_injected() {
+  local pid="$1"
+  python3 - "$pid" <<'PY'
+import ctypes, ctypes.util, sys
+pid = int(sys.argv[1])
+libc = ctypes.CDLL(ctypes.util.find_library("c"))
+mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+size = ctypes.c_size_t(0)
+if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0 or size.value == 0:
+    sys.exit(2)
+buf = (ctypes.c_char * size.value)()
+if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+    sys.exit(2)
+raw = bytes(buf[: size.value])
+parts = raw.split(b"\x00")
+env = {}
+for part in parts:
+    if b"=" not in part:
+        continue
+    key, _, value = part.decode("utf-8", "replace").partition("=")
+    env[key] = value
+proxy = env.get("HTTP_PROXY") or env.get("http_proxy") or ""
+node_flag = env.get("NODE_USE_ENV_PROXY", "")
+if "127.0.0.1:7897" not in proxy and "localhost:7897" not in proxy:
+    sys.exit(1)
+print(f"{proxy} NODE_USE_ENV_PROXY={node_flag}")
+if b"--proxy-server=" not in raw:
+    sys.exit(3)
+PY
+}
+
+inject_session_env
+echo "grok-bot: session env -> HTTP_PROXY=${PROXY_HTTP} NODE_USE_ENV_PROXY=1"
+
+if [[ "$RESTART" -eq 0 ]]; then
+  echo "grok-bot: skipped restart"
+  exit 0
+fi
+
+if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+  echo "grok-bot: quitting current Grok Bot"
+  quit_grok_bot
+  sleep 0.3
+fi
+
+open \
+  --env "HTTP_PROXY=${PROXY_HTTP}" \
+  --env "HTTPS_PROXY=${PROXY_HTTP}" \
+  --env "http_proxy=${PROXY_HTTP}" \
+  --env "https_proxy=${PROXY_HTTP}" \
+  --env "ALL_PROXY=${PROXY_SOCKS}" \
+  --env "all_proxy=${PROXY_SOCKS}" \
+  --env "NO_PROXY=${NO_PROXY_VALUE}" \
+  --env "no_proxy=${NO_PROXY_VALUE}" \
+  --env "NODE_USE_ENV_PROXY=1" \
+  -a "$APP_NAME" \
+  --args \
+  --proxy-server="${PROXY_HTTP}" \
+  --proxy-bypass-list="${PROXY_BYPASS}"
+
+echo "grok-bot: launched ${APP_NAME} with proxy env and --proxy-server"
+
+main_pid=""
+for i in $(seq 1 40); do
+  main_pid="$(pid_of_main || true)"
+  if [[ -n "$main_pid" ]]; then
+    break
+  fi
+  sleep 0.2
+done
+
+if [[ -z "$main_pid" ]]; then
+  echo "grok-bot: Grok Bot did not start" >&2
+  exit 1
+fi
+
+sleep 1
+set +e
+injected="$(verify_injected "$main_pid")"
+verify_status=$?
+set -e
+case "$verify_status" in
+  0) echo "grok-bot: pid ${main_pid} ${injected} --proxy-server=ok" ;;
+  3) echo "grok-bot: pid ${main_pid} ${injected} (warning: --proxy-server not visible in argv)" ;;
+  *)
+    echo "grok-bot: pid ${main_pid} started but proxy env was not visible" >&2
+    exit 1
+    ;;
+esac
