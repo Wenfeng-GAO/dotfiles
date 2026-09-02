@@ -43,6 +43,21 @@ fi
 
 NO_PROXY_VALUE=".alipay.com,alipay.com,localhost,127.0.0.1,macbook-pro-3,macbook-pro-3.local,MacBook-Pro-3,MacBook-Pro-3.local,.local"
 
+# Paperclip's grok_local adapter already supplies --always-approve. Keep this
+# wrapper usable both directly and through Paperclip without passing the flag
+# twice (the Grok CLI rejects duplicate occurrences).
+APPROVAL_ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--always-approve" ]]; then
+    APPROVAL_ARGS=()
+    break
+  fi
+  APPROVAL_ARGS=(--always-approve)
+done
+if [[ $# -eq 0 ]]; then
+  APPROVAL_ARGS=(--always-approve)
+fi
+
 exec env \
   https_proxy=http://127.0.0.1:7897 \
   http_proxy=http://127.0.0.1:7897 \
@@ -52,4 +67,4 @@ exec env \
   ALL_PROXY=socks5://127.0.0.1:7897 \
   NO_PROXY="$NO_PROXY_VALUE" \
   no_proxy="$NO_PROXY_VALUE" \
-  "$GROK_BIN" --always-approve "$@"
+  "$GROK_BIN" "${APPROVAL_ARGS[@]}" "$@"
