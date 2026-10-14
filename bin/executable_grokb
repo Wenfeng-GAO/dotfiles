@@ -43,6 +43,19 @@ fi
 
 NO_PROXY_VALUE=".alipay.com,alipay.com,localhost,127.0.0.1,macbook-pro-3,macbook-pro-3.local,MacBook-Pro-3,MacBook-Pro-3.local,.local"
 
+# Grok's direct loopback connection to Clash can fail with ENOTCONN on this
+# Mac. The local TCP relay keeps the same Clash instance and selected node.
+GROKB_PROXY_URL="${GROKB_PROXY_URL:-http://127.0.0.1:17897}"
+if [[ "$GROKB_PROXY_URL" == "http://127.0.0.1:17897" ]]; then
+  RELAY_BIN="$HOME/bin/grok-loopback-relay"
+  PYTHON_BIN="$(command -v python3 || true)"
+  if [[ -z "$PYTHON_BIN" || ! -f "$RELAY_BIN" ]]; then
+    echo "grokb: local proxy relay or Python 3 is missing" >&2
+    exit 1
+  fi
+  "$PYTHON_BIN" "$RELAY_BIN" --ensure --listen-port 17897 --upstream-port 7897
+fi
+
 # Paperclip's grok_local adapter already supplies --always-approve. Keep this
 # wrapper usable both directly and through Paperclip without passing the flag
 # twice (the Grok CLI rejects duplicate occurrences).
@@ -59,12 +72,12 @@ if [[ $# -eq 0 ]]; then
 fi
 
 exec env \
-  https_proxy=http://127.0.0.1:7897 \
-  http_proxy=http://127.0.0.1:7897 \
-  HTTPS_PROXY=http://127.0.0.1:7897 \
-  HTTP_PROXY=http://127.0.0.1:7897 \
-  all_proxy=socks5://127.0.0.1:7897 \
-  ALL_PROXY=socks5://127.0.0.1:7897 \
+  https_proxy="$GROKB_PROXY_URL" \
+  http_proxy="$GROKB_PROXY_URL" \
+  HTTPS_PROXY="$GROKB_PROXY_URL" \
+  HTTP_PROXY="$GROKB_PROXY_URL" \
+  all_proxy="$GROKB_PROXY_URL" \
+  ALL_PROXY="$GROKB_PROXY_URL" \
   NO_PROXY="$NO_PROXY_VALUE" \
   no_proxy="$NO_PROXY_VALUE" \
   "$GROK_BIN" "${APPROVAL_ARGS[@]}" "$@"

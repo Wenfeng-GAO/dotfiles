@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Local TCP relay. Forwards opaque bytes without inspecting or logging payloads."""
+
+import argparse
+import asyncio
+import fcntl
+import json
+import os
+from pathlib import Path
+import select
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+
+class Relay:
+    def __init__(self, listen_port=17897, upstream_port=7897, connect_timeout=5.0):
+        if listen_port and listen_port == upstream_port:
+            raise ValueError("listen and upstream ports must differ")
+        self.listen_port = listen_port
+        self.upstream_port = upstream_port
+        self.connect_timeout = connect_timeout
+        self.server = None
+        self.connections = set()
+        self.clients = set()
+        self.closing = False
+
+    async def start(self):
+        self.server = await asyncio.start_server(self._accept, "127.0.0.1", self.listen_port)
+        return self.server.sockets[0].getsockname()[1]
+
+    def _accept(self, reader, writer):
+        if self.closing:
+            writer.close()
+            return
+        self.clients.add(writer)
+        task = asyncio.create_task(self._forward(reader, writer))
+        self.connections.add(task)
+        task.add_done_callback(self.connections.discard)
+
+    @staticmethod
+    async def _pump(reader, writer):
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+        # Preserve the other direction: an EOF is not a full TCP disconnect.
+        writer.write_eof()
+        await writer.drain()
+
+    async def _forward(self, reader, writer):
+        upstream = None
+        pumps = []
+        try:
+            upstream_reader, upstream = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", self.upstream_port), self.connect_timeout
+            )
+            pumps = [asyncio.create_task(self._pump(reader, upstream)),
+                     asyncio.create_task(self._pump(upstream_reader, writer))]
+            done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_EXCEPTION)
+            for task in done:
+                task.result()
+        except (OSError, asyncio.TimeoutError):
+            pass
+        finally:
+            for task in pumps:
+                task.cancel()
+            # Close transports before awaiting anything, including cancellation.
+            for stream in (writer, upstream):
+                if stream is not None:
+                    stream.close()
+            await asyncio.gather(*pumps, return_exceptions=True)
+            for stream in (writer, upstream):
+                if stream is not None:
+                    try:
+                        await asyncio.wait_for(stream.wait_closed(), 1)
+                    except asyncio.TimeoutError:
+                        stream.transport.abort()
+                    except OSError:
+                        pass
+            self.clients.discard(writer)
+
+    async def close(self):
+        self.closing = True
+        if self.server is not None:
+            self.server.close()
+        # A just-accepted handler can be cancelled before its finally block starts.
+        for writer in self.clients:
+            writer.close()
+        tasks = list(self.connections)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.connections.clear()
+        self.clients.clear()
+        if self.server is not None:
+            await self.server.wait_closed()
+
+
+async def _serve(args):
+    relay = Relay(args.listen_port, args.upstream_port, args.connect_timeout)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    try:
+        port = await relay.start()
+        if args.ready_fd is not None:
+            os.write(args.ready_fd, b"ready\n")
+            os.close(args.ready_fd)
+        print(f"Listening on 127.0.0.1:{port}; upstream 127.0.0.1:{args.upstream_port}", flush=True)
+        await stop.wait()
+    finally:
+        await relay.close()
+
+
+def _signature(pid):
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart=,command="],
+                            capture_output=True, text=True, timeout=2)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _listening(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def ensure(args):
+    """Start an owned relay on demand, without installing any system service."""
+    directory = Path(args.state_dir).expanduser()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if directory.is_symlink() or directory.stat().st_uid != os.getuid():
+        raise OSError("state directory must be owned by the current user and not a symlink")
+    directory.chmod(0o700)
+    script = str(Path(__file__).resolve())
+    state_path = directory / f"relay-{args.listen_port}.json"
+    lock_fd = os.open(directory / "ensure.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    os.fchmod(lock_fd, 0o600)
+    try:
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise OSError("another relay startup is holding the lock")
+                time.sleep(0.05)
+        try:
+            record = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            record = {}
+        pid = record.get("pid") if isinstance(record, dict) else None
+        if isinstance(pid, int) and pid > 1 and record.get("signature") and record["signature"] == _signature(pid):
+            if record.get("script") != script or record.get("upstream_port") != args.upstream_port:
+                raise OSError("an existing owned relay uses different settings")
+            if _listening(args.listen_port):
+                return pid
+            raise OSError("the recorded relay is running but not listening")
+        if _listening(args.listen_port):
+            raise OSError(f"127.0.0.1:{args.listen_port} is occupied by an unrecognized process")
+        state_path.unlink(missing_ok=True)
+        log_path = directory / "startup-error.log"
+        log_fd = os.open(log_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        os.fchmod(log_fd, 0o600)
+        read_fd, write_fd = os.pipe()
+        process = None
+        ready = False
+        try:
+            process = subprocess.Popen(
+                [sys.executable, script, "--listen-port", str(args.listen_port),
+                 "--upstream-port", str(args.upstream_port), "--connect-timeout", str(args.connect_timeout),
+                 "--ready-fd", str(write_fd)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log_fd,
+                start_new_session=True, pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            write_fd = None
+            readable, _, _ = select.select([read_fd], [], [], 5)
+            if not readable or os.read(read_fd, 16) != b"ready\n" or process.poll() is not None:
+                raise OSError(f"relay did not start; see {log_path}")
+            signature = _signature(process.pid)
+            if not signature or not _listening(args.listen_port):
+                raise OSError("relay exited before its listener could be confirmed")
+            record = {"pid": process.pid, "signature": signature, "script": script,
+                      "listen_port": args.listen_port, "upstream_port": args.upstream_port}
+            state_fd = os.open(state_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(state_fd, "w") as state:
+                json.dump(record, state)
+            ready = True
+            return process.pid
+        finally:
+            os.close(read_fd)
+            if write_fd is not None:
+                os.close(write_fd)
+            os.close(log_fd)
+            if process is not None and not ready:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                state_path.unlink(missing_ok=True)
+    finally:
+        os.close(lock_fd)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--listen-port", type=int, default=17897)
+    parser.add_argument("--upstream-port", type=int, default=7897)
+    parser.add_argument("--connect-timeout", type=float, default=5.0)
+    parser.add_argument("--ensure", action="store_true", help="reuse or start a private relay on demand")
+    parser.add_argument("--state-dir", default="~/.cache/grok-loopback-proxy")
+    parser.add_argument("--ready-fd", type=int, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if not 0 <= args.listen_port <= 65535 or not 1 <= args.upstream_port <= 65535:
+        parser.error("listen port must be 0–65535 and upstream port 1–65535")
+    if not 0 < args.connect_timeout < 300:
+        parser.error("connect timeout must be between 0 and 300 seconds")
+    if args.listen_port == args.upstream_port:
+        parser.error("listen and upstream ports must differ")
+    if args.ensure and args.listen_port == 0:
+        parser.error("--ensure requires a fixed nonzero listen port")
+    try:
+        if args.ensure:
+            ensure(args)
+        else:
+            asyncio.run(_serve(args))
+    except OSError as error:
+        print(f"Cannot start loopback relay: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
