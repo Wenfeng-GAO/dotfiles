@@ -16,22 +16,25 @@ PROXY_BYPASS="${GROK_BOT_PROXY_BYPASS:-*.alipay.com;*.alipay.net;*.antfin.com;*.
 APP_NAME="Grok Bot"
 APP_PATH="/Applications/${APP_NAME}.app"
 RESTART=1
+REUSE_RUNNING=0
 
 usage() {
   cat <<'EOF'
-Usage: grok-bot [--no-restart] [--help]
+Usage: grok-bot [--open | --no-restart] [--help]
 
 Start the local relay and restart Grok Bot.app with explicit Node and
 Chromium proxy settings through 127.0.0.1:17897 -> Clash 127.0.0.1:7897.
 The normal launch sets environment variables for Grok Bot only.
 
   --no-restart   only launchctl setenv; do not quit/reopen Grok Bot
+  --open         reuse a running instance when its proxy settings are correct
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0 ;;
+    --open) REUSE_RUNNING=1 ;;
     -h|--help) usage; exit 0 ;;
     *)
       echo "grok-bot: unknown argument: $1" >&2
@@ -125,6 +128,15 @@ if [[ "$RESTART" -eq 0 ]]; then
   inject_session_env
   echo "grok-bot: skipped restart"
   exit 0
+fi
+
+if [[ "$REUSE_RUNNING" -eq 1 ]]; then
+  existing_pid="$(pid_of_main || true)"
+  if [[ -n "$existing_pid" ]] && verify_injected "$existing_pid" >/dev/null 2>&1; then
+    open -a "$APP_NAME"
+    echo "grok-bot: reused pid ${existing_pid} with verified proxy settings"
+    exit 0
+  fi
 fi
 
 if pgrep -x "$APP_NAME" >/dev/null 2>&1; then

@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+umask 077
+mkdir -p "$HOME/.cache/grok-bot-launcher"
+exec "$HOME/bin/grok-bot" --open >>"$HOME/.cache/grok-bot-launcher/launcher.log" 2>&1
