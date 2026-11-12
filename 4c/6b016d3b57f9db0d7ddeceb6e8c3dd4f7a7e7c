@@ -1,0 +1,19 @@
+dot_zshrc
+  s_e37bebb82aeb8c::t_2f09fefa04ccfd 104-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4c6b016d3b57f9db0d7ddeceb6e8c3dd4f7a7e7c",
+  "prompts": {},
+  "sessions": {
+    "s_e37bebb82aeb8c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1cf89-7766-7211-9faf-df0ccd8c95b8",
+        "model": "codex/gpt-6-astra"
+      },
+      "human_author": "恒拙 <hengzhuo.gwf@antgroup.com>"
+    }
+  }
+}
