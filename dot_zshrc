@@ -101,3 +101,6 @@ gripmd() {
   print -P "%F{blue}🔗 http://localhost:$port%f  (cmux 浏览器面板打开,Ctrl+C 退出)"
   grip "$target" "$port"
 }
+
+# Prefer local CLI installs over temporary test tool directories.
+export PATH="$HOME/.local/bin:$PATH"
