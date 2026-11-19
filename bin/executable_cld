@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-CLD_BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 USE_PROXY=true
 API_TIMEOUT_MS=""
 CAST_RECORD="${CAST_RECORD:-0}"
@@ -21,8 +20,6 @@ cld_route_provider_override_set="${CLD_ROUTE_PROVIDER+x}"
 cld_route_provider_override="${CLD_ROUTE_PROVIDER-}"
 cld_route_model_override_set="${CLD_ROUTE_MODEL+x}"
 cld_route_model_override="${CLD_ROUTE_MODEL-}"
-cld_claude_bin_override_set="${CLD_CLAUDE_BIN+x}"
-cld_claude_bin_override="${CLD_CLAUDE_BIN-}"
 
 if [[ -r "$CLD_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -35,17 +32,10 @@ fi
 if [[ "$cld_route_model_override_set" == "x" ]]; then
   CLD_ROUTE_MODEL="$cld_route_model_override"
 fi
-if [[ "$cld_claude_bin_override_set" == "x" ]]; then
-  CLD_CLAUDE_BIN="$cld_claude_bin_override"
-fi
 unset cld_route_provider_override_set cld_route_provider_override
 unset cld_route_model_override_set cld_route_model_override
-unset cld_claude_bin_override_set cld_claude_bin_override
 
-CLAUDE_BIN="${CLD_CLAUDE_BIN:-}"
-if [[ -z "$CLAUDE_BIN" ]]; then
-  CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
-fi
+CLAUDE_BIN="$HOME/.codefuse/fuse/engine/bin/claude/2.1.199/claude"
 CFUSE_CLAUDE_BIN="${CLD_CFUSE_BIN:-$HOME/.local/bin/cfuse-claude-code}"
 
 usage() {
@@ -94,56 +84,6 @@ require_env() {
     echo "cld: missing $name for provider '$provider'" >&2
     echo "cld: add it to $CLD_ENV_FILE" >&2
     exit 1
-  fi
-}
-
-check_claude_update() {
-  if [[ "${CLD_SKIP_UPDATE_CHECK:-}" == "1" ]]; then
-    return
-  fi
-
-  if ! command -v npm >/dev/null 2>&1 || [[ -z "$CLAUDE_BIN" || ! -x "$CLAUDE_BIN" ]]; then
-    return
-  fi
-
-  local current_version latest_version reply
-  local npm_env=()
-
-  current_version="$("$CLAUDE_BIN" --version 2>/dev/null | awk '{print $1}' || true)"
-
-  if [[ "$USE_PROXY" == "true" ]]; then
-    npm_env+=(https_proxy="http://127.0.0.1:7897")
-    npm_env+=(http_proxy="http://127.0.0.1:7897")
-    npm_env+=(all_proxy="socks5://127.0.0.1:7897")
-    npm_env+=(NO_PROXY=".alipay.com,alipay.com,localhost,127.0.0.1")
-    npm_env+=(no_proxy=".alipay.com,alipay.com,localhost,127.0.0.1")
-  fi
-
-  latest_version="$(env "${npm_env[@]}" npm view @anthropic-ai/claude-code version --fetch-timeout=8000 --fetch-retries=0 2>/dev/null || true)"
-
-  if [[ -z "$current_version" || -z "$latest_version" || "$current_version" == "$latest_version" ]]; then
-    return
-  fi
-
-  echo "cld: claude-code update available: $current_version -> $latest_version" >&2
-
-  if [[ -t 0 && -t 2 ]]; then
-    printf "cld: update claude-code to %s now? [y/N] " "$latest_version" >&2
-    read -r reply
-
-    case "$reply" in
-      y|Y|yes|YES)
-        if ! NPM_SAFE_UPDATE_BIN_PATH="$CLAUDE_BIN" \
-          NPM_SAFE_UPDATE_PREFIX="$(npm prefix -g)" \
-          "$CLD_BIN_DIR/npm-safe-self-update" @anthropic-ai/claude-code claude "$latest_version" cld; then
-          echo "cld: claude-code update failed; continuing with $current_version" >&2
-        fi
-        ;;
-      *)
-        ;;
-    esac
-  else
-    echo "cld: run: npm install -g @anthropic-ai/claude-code@latest" >&2
   fi
 }
 
@@ -209,7 +149,6 @@ exec_claude_passthrough() {
 
 case "${1:-}" in
   --version|-v)
-    check_claude_update
     exec "$CLAUDE_BIN" --version
     ;;
 esac
@@ -425,8 +364,6 @@ if [[ -z "$CLAUDE_BIN" || ! -x "$CLAUDE_BIN" ]]; then
   echo "Error: claude command not found or not executable: ${CLAUDE_BIN:-<unset>}" >&2
   exit 127
 fi
-
-check_claude_update
 
 ENV_ARGS=()
 
