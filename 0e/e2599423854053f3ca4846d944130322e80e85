@@ -1,0 +1,19 @@
+bin/executable_cld
+  s_d9719904b1f0fb::t_cd53fef9f9a79c 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0ee2599423854053f3ca4846d944130322e80e85",
+  "prompts": {},
+  "sessions": {
+    "s_d9719904b1f0fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f34f-5e47-72c0-8e32-0e8bf3f8f3a7",
+        "model": "group/smart-split"
+      },
+      "human_author": "恒拙 <hengzhuo.gwf@antgroup.com>"
+    }
+  }
+}
